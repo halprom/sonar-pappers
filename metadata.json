@@ -1,0 +1,5 @@
+{
+  "name": "PappersMapper",
+  "description": "Visualise and explore French corporate networks using the Pappers API with recursive crawling and interactive graphing.",
+  "requestFramePermissions": []
+}
