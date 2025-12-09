@@ -90,7 +90,7 @@ const OrgChart: React.FC<OrgChartProps> = ({ nodes, links, onNodeClick }) => {
             const node = nodes.find(n => n.id === nodeId);
             if (!node) return null;
 
-            const hasProcedures = node.data?.procedures_collectives && node.data.procedures_collectives.length > 0;
+            const hasProcedures = node.hasAlert || (node.data?.procedures_collectives && node.data.procedures_collectives.length > 0);
 
             const treeNode: TreeNode = {
                 id: node.id,

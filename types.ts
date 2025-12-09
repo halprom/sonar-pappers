@@ -13,8 +13,25 @@ export interface PappersCompany {
   capital?: number;
   representants?: PappersRepresentative[];
   entreprises_dirigees?: PappersCompanySummary[];
-  procedures_collectives?: any[];
+  procedures_collectives?: ProcedureCollective[];
+  procedure_collective_existe?: boolean;
+  procedure_collective_en_cours?: boolean;
+  publications_bodacc?: BodaccPublication[];
   statut_rcs?: string;
+}
+
+export interface BodaccPublication {
+  type?: string;           // e.g. "Procédure collective", "Création", etc.
+  nature?: string;         // e.g. "Jugement de liquidation judiciaire"
+  famille?: string;        // e.g. "Extrait de jugement"
+  date?: string;
+  date_jugement?: string;
+}
+
+export interface ProcedureCollective {
+  type: string;           // e.g. "Liquidation judiciaire", "Redressement judiciaire", etc.
+  date_debut?: string;
+  date_fin?: string;
 }
 
 export interface PappersRepresentative {
@@ -57,6 +74,8 @@ export interface GraphNode {
   radius?: number; // Visualization property
   degree?: number; // Distance from root
   status?: 'active' | 'closed' | 'unknown';
+  hasAlert?: boolean; // True if company has collective procedures
+  procedures?: ProcedureCollective[]; // List of collective procedures
 }
 
 // Path step represents one entity in the relationship chain

@@ -24,11 +24,10 @@ const DirectorsTable: React.FC<DirectorsTableProps> = ({ nodes, links, onNodeCli
         // Get all physical persons
         const persons = nodes.filter(n => n.type === NodeType.PERSON);
 
-        // Get all companies with procedures
+        // Get all companies with procedures (using hasAlert flag OR data)
         const companiesWithProc = nodes.filter(n =>
             (n.type === NodeType.COMPANY || n.type === NodeType.ROOT) &&
-            n.data?.procedures_collectives &&
-            n.data.procedures_collectives.length > 0
+            (n.hasAlert || (n.data?.procedures_collectives && n.data.procedures_collectives.length > 0))
         );
 
         // For each person, find if they're linked to any company with procedures
@@ -134,8 +133,8 @@ const DirectorsTable: React.FC<DirectorsTableProps> = ({ nodes, links, onNodeCli
                                         <div className="flex items-center gap-2">
                                             <span className="font-medium text-white text-sm truncate">{company.label}</span>
                                             <span className={`px-1.5 py-0.5 text-xs font-medium rounded ${company.status === 'active'
-                                                    ? 'bg-cyber-success/20 text-cyber-success'
-                                                    : 'bg-slate-600/20 text-slate-500'
+                                                ? 'bg-cyber-success/20 text-cyber-success'
+                                                : 'bg-slate-600/20 text-slate-500'
                                                 }`}>
                                                 {company.status === 'active' ? 'Actif' : 'Radié'}
                                             </span>

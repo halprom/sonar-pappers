@@ -236,12 +236,62 @@ export class PappersCrawler {
       const currentPath: PathStep[] = [...current.path, currentStep];
       const status = companyData.statut_rcs === 'Radié' ? 'closed' : 'active';
 
+      // =========================================================
+      // DETECT COLLECTIVE PROCEDURES (ALERTS)
+      // Check both procedures_collectives AND publications_bodacc
+      // =========================================================
+      const ALERT_KEYWORDS = ['conciliation', 'observation', 'redressement', 'liquidation', 'sauvegarde'];
+      let hasAlert = false;
+      let procedures: any[] = [];
+
+      // 1. Check procedures_collectives field (standard field)
+      if (companyData.procedure_collective_existe || (companyData.procedures_collectives && companyData.procedures_collectives.length > 0)) {
+        if (companyData.procedures_collectives) {
+          for (const proc of companyData.procedures_collectives) {
+            const procType = (proc.type || '').toLowerCase();
+            if (ALERT_KEYWORDS.some(kw => procType.includes(kw))) {
+              hasAlert = true;
+              procedures.push(proc);
+            }
+          }
+        } else {
+          // procedure_collective_existe is true but no details - flag as alert anyway
+          hasAlert = true;
+        }
+      }
+
+      // 2. Check publications_bodacc for type="Procédure collective" (for radiated companies)
+      if (companyData.publications_bodacc && Array.isArray(companyData.publications_bodacc)) {
+        for (const pub of companyData.publications_bodacc) {
+          if (pub.type && pub.type.toLowerCase().includes('procédure collective')) {
+            // Check nature/famille for specific keywords
+            const nature = (pub.nature || '').toLowerCase();
+            const famille = (pub.famille || '').toLowerCase();
+            if (ALERT_KEYWORDS.some(kw => nature.includes(kw) || famille.includes(kw))) {
+              hasAlert = true;
+              // Add as procedure if not already detected
+              const procedureFromBodacc = {
+                type: pub.nature || pub.famille || 'Procédure collective',
+                date_debut: pub.date_jugement || pub.date,
+                date_fin: null,
+                source: 'BODACC'
+              };
+              procedures.push(procedureFromBodacc);
+            }
+          }
+        }
+      }
+
+      console.log(`[Crawler] ${currentLabel} (${current.siren}) - hasAlert: ${hasAlert}, procedures: ${procedures.length}`);
+
       // 1. Process/Update the Company Node
       if (this.nodes.has(current.siren)) {
         const existingNode = this.nodes.get(current.siren)!;
         existingNode.data = companyData;
         existingNode.status = status;
         existingNode.label = currentLabel;
+        existingNode.hasAlert = hasAlert;
+        existingNode.procedures = procedures;
         if (existingNode.type !== NodeType.ROOT) existingNode.type = NodeType.COMPANY;
       } else {
         this.nodes.set(current.siren, {
@@ -250,16 +300,15 @@ export class PappersCrawler {
           type: current.siren === rootSiren ? NodeType.ROOT : NodeType.COMPANY,
           data: companyData,
           degree: current.networkDepth,
-          status: status
+          status: status,
+          hasAlert: hasAlert,
+          procedures: procedures
         });
       }
 
       // =========================================================
       // HYBRID TRAVERSAL: Process Representatives (COSTLY links)
       // =========================================================
-      // Representatives going TO this company are "upward" links from the perspective
-      // of building an org chart. Traversing via persons to find their other mandates
-      // is a COSTLY network jump.
       if (companyData.representants) {
         for (const rep of companyData.representants) {
 
@@ -272,18 +321,13 @@ export class PappersCrawler {
           const repLabel = rep.personne_morale ? (rep.denomination || repId) : (rep.nom_complet || `${rep.prenom} ${rep.nom}`);
           const isPersonMoral = rep.personne_morale === true;
 
-          // HYBRID RULE: Physical persons are COSTLY to traverse through
-          // If we've exhausted our network depth budget, skip adding physical persons
-          // but still ALLOW moral persons (companies) as they follow different rules
+          // Check if we can traverse this link based on depth budget
+          // Physical persons are COSTLY network jumps
           if (!isPersonMoral && current.networkDepth >= maxDepth) {
-            // Skip adding this person - we've reached max network depth for person jumps
             continue;
           }
 
-          // Determine link cost for this representative
-          // - Moral person (company) directing this company: usually upward/lateral = COSTLY
-          // - Physical person: always COSTLY (network jump potential)
-          const repLinkCost = isPersonMoral ? LinkCost.COSTLY : LinkCost.COSTLY;
+          const repLinkCost = LinkCost.COSTLY;
 
           // Add Node
           if (!this.nodes.has(repId)) {
@@ -292,7 +336,7 @@ export class PappersCrawler {
               label: repLabel,
               type: isPersonMoral ? NodeType.COMPANY : NodeType.PERSON,
               data: rep,
-              degree: current.networkDepth + (repLinkCost === LinkCost.COSTLY ? 1 : 0),
+              degree: current.networkDepth + 1,
               status: 'active'
             });
           }
@@ -313,20 +357,77 @@ export class PappersCrawler {
             cost: repLinkCost
           });
 
-          // If Moral Person (company as director), queue for crawling
-          // This is a COSTLY link - company appearing as a representative (holding, etc.)
+          // 1. Case: Moral Person (Company)
+          // Traverse to this company if not visited
           if (isPersonMoral && rep.siren && !this.visited.has(rep.siren)) {
-            // Check network depth budget for COSTLY links
             const newNetworkDepth = current.networkDepth + 1;
             if (newNetworkDepth <= maxDepth && companiesScanned < limit) {
               this.visited.add(rep.siren);
               queue.push({
                 siren: rep.siren,
-                networkDepth: newNetworkDepth, // COSTLY: increment depth
+                networkDepth: newNetworkDepth,
                 path: currentPath,
                 lastRelation: rep.qualite,
                 entryLinkCost: LinkCost.COSTLY
               });
+            }
+          }
+
+          // 2. Case: Physical Person
+          // Perform REVERSE SEARCH to find other mandates
+          if (!isPersonMoral) {
+            const newNetworkDepth = current.networkDepth + 1;
+            const hasName = !!(rep.nom && rep.prenom);
+            const depthOk = newNetworkDepth <= maxDepth;
+            const limitOk = companiesScanned < limit;
+
+            console.log(`[Crawler] Checking Rep: ${repLabel} (Moral: ${isPersonMoral}) - Depth: ${newNetworkDepth}/${maxDepth} (${depthOk}) - HasName: ${hasName} - Limit: ${limitOk}`);
+
+            if (hasName && depthOk && limitOk) {
+
+              // Fetch other companies managed by this person
+              console.log(`[Crawler] triggering fetchPersonMandates for ${rep.nom} ${rep.prenom}`);
+              const mandates = await this.fetchPersonMandates(rep.nom!, rep.prenom!, rep.date_naissance);
+
+              for (const mandate of mandates) {
+                if (mandate.siren === current.siren) continue; // Skip current company
+                if (!mandate.siren) continue;
+
+                // Add Mandate Node (Company)
+                if (!this.nodes.has(mandate.siren)) {
+                  this.nodes.set(mandate.siren, {
+                    id: mandate.siren,
+                    label: mandate.denomination,
+                    type: NodeType.COMPANY,
+                    data: mandate,
+                    degree: newNetworkDepth,
+                    status: 'unknown'
+                  });
+                }
+
+                // Add Link (Person -> Mandate)
+                // This completes the jump: Company A <- Person -> Company B
+                this.links.push({
+                  source: repId,
+                  target: mandate.siren,
+                  label: "Mandataire", // We might not know exact role from search, assume generic
+                  active: true,
+                  path: [...currentPath, repStep], // Path extends from Person
+                  cost: LinkCost.COSTLY
+                });
+
+                // Queue Mandate for crawling
+                if (!this.visited.has(mandate.siren) && companiesScanned < limit) {
+                  this.visited.add(mandate.siren);
+                  queue.push({
+                    siren: mandate.siren,
+                    networkDepth: newNetworkDepth, // Consumed 1 depth for the Person Jump
+                    path: [...currentPath, repStep], // Path flows through person
+                    lastRelation: "Mandataire",
+                    entryLinkCost: LinkCost.COSTLY
+                  });
+                }
+              }
             }
           }
         }
@@ -335,27 +436,25 @@ export class PappersCrawler {
       // =========================================================
       // HYBRID TRAVERSAL: Process Owned Companies (FREE links)
       // =========================================================
-      // entreprises_dirigees represents descending org chart links
-      // These are FREE - no depth budget consumed
       if (companyData.entreprises_dirigees) {
         for (const sub of companyData.entreprises_dirigees) {
           if (!sub.siren) continue;
 
-          // Add Node (Placeholder until fetched)
+          // Add Node
           if (!this.nodes.has(sub.siren)) {
+            // ... existing logic
             const isRadiated = sub.denomination?.toLowerCase().includes('(radiée)') || sub.denomination?.toLowerCase().includes('(radiee)');
-
             this.nodes.set(sub.siren, {
               id: sub.siren,
               label: sub.denomination,
               type: NodeType.COMPANY,
               data: sub,
-              degree: current.networkDepth, // FREE: same depth level
+              degree: current.networkDepth,
               status: isRadiated ? 'closed' : 'unknown'
             });
           }
 
-          // Add Link (Entreprise -> Filiale) - FREE descending link
+          // Add Link
           const subStep: PathStep = {
             name: sub.denomination,
             type: NodeType.COMPANY,
@@ -368,16 +467,16 @@ export class PappersCrawler {
             label: sub.qualite || "Mandataire",
             active: true,
             path: [...currentPath, subStep],
-            cost: LinkCost.FREE // Descending org chart = FREE
+            cost: LinkCost.FREE
           });
 
-          // Queue for crawling - FREE link, NO depth increment
+          // Queue
           if (!this.visited.has(sub.siren)) {
             if (companiesScanned < limit) {
               this.visited.add(sub.siren);
               queue.push({
                 siren: sub.siren,
-                networkDepth: current.networkDepth, // FREE: no depth increment!
+                networkDepth: current.networkDepth,
                 path: currentPath,
                 lastRelation: sub.qualite || "Mandataire",
                 entryLinkCost: LinkCost.FREE
@@ -393,6 +492,67 @@ export class PappersCrawler {
       links: this.links,
       stats: this.getStats(companiesScanned, maxDepth)
     };
+  }
+
+  // Find other companies managed by a physical person using /recherche-dirigeants
+  private async fetchPersonMandates(nom: string, prenom: string, dateNaissance?: string): Promise<{ siren: string, denomination: string }[]> {
+    if (this.apiKey === 'DEMO') {
+      return [];
+    }
+
+    try {
+      const params: any = {
+        api_token: this.apiKey,
+        nom_dirigeant: nom,
+        prenom_dirigeant: prenom,
+        type_dirigeant: 'physique',
+        par_page: 100 // Get many results
+      };
+
+      // Date format for Pappers: JJ-MM-AAAA
+      if (dateNaissance) {
+        const [y, m, d] = dateNaissance.split('-');
+        if (y && m && d) {
+          const formattedDate = `${d}-${m}-${y}`;
+          params.date_de_naissance_dirigeant_min = formattedDate;
+          params.date_de_naissance_dirigeant_max = formattedDate;
+        }
+      }
+
+      console.log(`[Crawler] Searching mandates for ${prenom} ${nom} (${dateNaissance}) via /recherche-dirigeants`, params);
+
+      const response = await axios.get(`${PAPPERS_API_URL}/recherche-dirigeants`, { params });
+      this.credits += 1;
+
+      // Response structure: { resultats: [{ nom, prenom, ..., entreprises: [{siren, denomination, ...}] }], total, page }
+      if (response.data && response.data.resultats && response.data.resultats.length > 0) {
+        // Get enterprises from all matching directors
+        const allEnterprises: { siren: string, denomination: string }[] = [];
+
+        for (const dirigeant of response.data.resultats) {
+          if (dirigeant.entreprises && Array.isArray(dirigeant.entreprises)) {
+            for (const ent of dirigeant.entreprises) {
+              if (ent.siren) {
+                allEnterprises.push({
+                  siren: ent.siren,
+                  denomination: ent.nom_entreprise || ent.denomination || ent.siren
+                });
+              }
+            }
+          }
+        }
+
+        console.log(`[Crawler] Found ${allEnterprises.length} mandates for ${prenom} ${nom}`);
+        return allEnterprises;
+      }
+
+      console.log(`[Crawler] No mandates found for ${prenom} ${nom}`);
+      return [];
+
+    } catch (err) {
+      console.warn("Failed to fetch mandates for person:", nom, prenom, err);
+      return [];
+    }
   }
 
   private getStats(scanned: number, depth: number): CrawlStats {

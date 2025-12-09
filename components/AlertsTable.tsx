@@ -13,11 +13,10 @@ interface AlertsTableProps {
 const AlertsTable: React.FC<AlertsTableProps> = ({ nodes, links, onNodeClick }) => {
     const { t } = useLanguage();
 
-    // Filter to only companies with procedures_collectives
+    // Filter to companies with collective procedures (using hasAlert flag OR data)
     const alertNodes = nodes.filter(node =>
-        node.type === NodeType.COMPANY &&
-        node.data?.procedures_collectives &&
-        node.data.procedures_collectives.length > 0
+        (node.type === NodeType.COMPANY || node.type === NodeType.ROOT) &&
+        (node.hasAlert || (node.data?.procedures_collectives && node.data.procedures_collectives.length > 0))
     );
 
     // Helper to find path for a node

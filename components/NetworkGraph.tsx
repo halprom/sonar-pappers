@@ -105,7 +105,7 @@ const NetworkGraph: React.FC<NetworkGraphProps> = ({ nodes, links, onNodeClick }
       const isRoot = d.type === NodeType.ROOT;
       const isPerson = d.type === NodeType.PERSON;
       const isInactive = d.status === 'closed';
-      const hasProcedures = d.data?.procedures_collectives && d.data.procedures_collectives.length > 0;
+      const hasProcedures = d.hasAlert || (d.data?.procedures_collectives && d.data.procedures_collectives.length > 0);
 
       // Colors - Cyberpunk theme
       let baseFill = isPerson ? COLORS.background : COLORS.nodeCompany;
