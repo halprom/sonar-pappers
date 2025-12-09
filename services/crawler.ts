@@ -1,5 +1,5 @@
 import axios from 'axios';
-import { PappersCompany, GraphNode, GraphLink, NodeType, CrawlStats, CrawlError, PathStep } from '../types';
+import { PappersCompany, GraphNode, GraphLink, NodeType, LinkCost, CrawlStats, CrawlError, PathStep } from '../types';
 import { MOCK_DATA_ROOT_SIREN, PAPPERS_API_URL } from '../constants';
 
 // Helper to generate a consistent ID for a person based on name/dob
@@ -181,13 +181,23 @@ export class PappersCrawler {
     onProgress: (stats: CrawlStats) => void
   ): Promise<{ nodes: GraphNode[]; links: GraphLink[]; stats: CrawlStats }> {
 
-    // Queue stores { siren, personDepth, pathFromRoot }
-    // personDepth only increments when traversing through a physical person
-    // Companies are always crawled regardless of depth
-    const queue: { siren: string; personDepth: number; path: PathStep[]; lastRelation?: string }[] = [{
+    // HYBRID TRAVERSAL ALGORITHM
+    // Queue stores { siren, networkDepth, path, lastRelation, lastLinkCost }
+    // networkDepth ONLY increments for COSTLY links (network jumps via persons/upward links)
+    // FREE links (descending org chart to subsidiaries) do NOT increment depth
+    interface QueueItem {
+      siren: string;
+      networkDepth: number;  // Budget consumed by COSTLY links only
+      path: PathStep[];
+      lastRelation?: string;
+      entryLinkCost?: LinkCost;  // Cost of the link that led here
+    }
+
+    const queue: QueueItem[] = [{
       siren: rootSiren,
-      personDepth: 0,
-      path: []
+      networkDepth: 0,
+      path: [],
+      entryLinkCost: LinkCost.FREE // Root is free to explore
     }];
 
     this.visited.add(rootSiren);
@@ -198,7 +208,6 @@ export class PappersCrawler {
       if (this.cancelFlag) break;
 
       // CRITICAL: Check limit BEFORE fetching to prevent extra API calls
-      // Use strictly >= to stop immediately
       if (companiesScanned >= limit) {
         break;
       }
@@ -206,7 +215,7 @@ export class PappersCrawler {
       const current = queue.shift()!;
 
       // Notify progress
-      onProgress(this.getStats(companiesScanned, current.personDepth));
+      onProgress(this.getStats(companiesScanned, current.networkDepth));
 
       const companyData = await this.fetchCompany(current.siren);
 
@@ -229,13 +238,10 @@ export class PappersCrawler {
 
       // 1. Process/Update the Company Node
       if (this.nodes.has(current.siren)) {
-        // Update existing node (it might have been created as a placeholder)
-        // This ensures status (Active/Radié) and data are correct
         const existingNode = this.nodes.get(current.siren)!;
         existingNode.data = companyData;
         existingNode.status = status;
         existingNode.label = currentLabel;
-        // Ensure type is updated if it was just inferred
         if (existingNode.type !== NodeType.ROOT) existingNode.type = NodeType.COMPANY;
       } else {
         this.nodes.set(current.siren, {
@@ -243,14 +249,17 @@ export class PappersCrawler {
           label: currentLabel,
           type: current.siren === rootSiren ? NodeType.ROOT : NodeType.COMPANY,
           data: companyData,
-          degree: current.personDepth,
+          degree: current.networkDepth,
           status: status
         });
       }
 
-      // Note: No global depth check here - depth only applies to persons
-
-      // 2. Process Representatives
+      // =========================================================
+      // HYBRID TRAVERSAL: Process Representatives (COSTLY links)
+      // =========================================================
+      // Representatives going TO this company are "upward" links from the perspective
+      // of building an org chart. Traversing via persons to find their other mandates
+      // is a COSTLY network jump.
       if (companyData.representants) {
         for (const rep of companyData.representants) {
 
@@ -263,11 +272,18 @@ export class PappersCrawler {
           const repLabel = rep.personne_morale ? (rep.denomination || repId) : (rep.nom_complet || `${rep.prenom} ${rep.nom}`);
           const isPersonMoral = rep.personne_morale === true;
 
-          // For physical persons, check depth limit
-          if (!isPersonMoral && current.personDepth >= maxDepth) {
-            // Skip adding this person - we've reached max depth for persons
+          // HYBRID RULE: Physical persons are COSTLY to traverse through
+          // If we've exhausted our network depth budget, skip adding physical persons
+          // but still ALLOW moral persons (companies) as they follow different rules
+          if (!isPersonMoral && current.networkDepth >= maxDepth) {
+            // Skip adding this person - we've reached max network depth for person jumps
             continue;
           }
+
+          // Determine link cost for this representative
+          // - Moral person (company) directing this company: usually upward/lateral = COSTLY
+          // - Physical person: always COSTLY (network jump potential)
+          const repLinkCost = isPersonMoral ? LinkCost.COSTLY : LinkCost.COSTLY;
 
           // Add Node
           if (!this.nodes.has(repId)) {
@@ -276,17 +292,16 @@ export class PappersCrawler {
               label: repLabel,
               type: isPersonMoral ? NodeType.COMPANY : NodeType.PERSON,
               data: rep,
-              degree: current.personDepth + (isPersonMoral ? 0 : 1),
+              degree: current.networkDepth + (repLinkCost === LinkCost.COSTLY ? 1 : 0),
               status: 'active'
             });
           }
 
           // Add Link (Dirigeant -> Entreprise)
-          // Build path step for this person with their role
           const repStep: PathStep = {
             name: repLabel,
             type: isPersonMoral ? NodeType.COMPANY : NodeType.PERSON,
-            relationFromPrevious: rep.qualite // e.g., "Président", "Gérant"
+            relationFromPrevious: rep.qualite
           };
 
           this.links.push({
@@ -294,32 +309,40 @@ export class PappersCrawler {
             target: current.siren,
             label: rep.qualite,
             active: rep.actuel !== false,
-            path: [...currentPath, repStep] // Path from root to this person with relationships
+            path: [...currentPath, repStep],
+            cost: repLinkCost
           });
 
-          // If Moral Person (company), queue for crawling - NO depth increment for companies
+          // If Moral Person (company as director), queue for crawling
+          // This is a COSTLY link - company appearing as a representative (holding, etc.)
           if (isPersonMoral && rep.siren && !this.visited.has(rep.siren)) {
-            if (companiesScanned < limit) {
+            // Check network depth budget for COSTLY links
+            const newNetworkDepth = current.networkDepth + 1;
+            if (newNetworkDepth <= maxDepth && companiesScanned < limit) {
               this.visited.add(rep.siren);
               queue.push({
                 siren: rep.siren,
-                personDepth: current.personDepth, // Companies don't increment person depth
+                networkDepth: newNetworkDepth, // COSTLY: increment depth
                 path: currentPath,
-                lastRelation: rep.qualite
+                lastRelation: rep.qualite,
+                entryLinkCost: LinkCost.COSTLY
               });
             }
           }
         }
       }
 
-      // 3. Process Owned Companies (Entreprises Dirigées)
+      // =========================================================
+      // HYBRID TRAVERSAL: Process Owned Companies (FREE links)
+      // =========================================================
+      // entreprises_dirigees represents descending org chart links
+      // These are FREE - no depth budget consumed
       if (companyData.entreprises_dirigees) {
         for (const sub of companyData.entreprises_dirigees) {
           if (!sub.siren) continue;
 
           // Add Node (Placeholder until fetched)
           if (!this.nodes.has(sub.siren)) {
-            // Detect "Radiée" in name for immediate visual feedback
             const isRadiated = sub.denomination?.toLowerCase().includes('(radiée)') || sub.denomination?.toLowerCase().includes('(radiee)');
 
             this.nodes.set(sub.siren, {
@@ -327,13 +350,12 @@ export class PappersCrawler {
               label: sub.denomination,
               type: NodeType.COMPANY,
               data: sub,
-              degree: current.personDepth,
+              degree: current.networkDepth, // FREE: same depth level
               status: isRadiated ? 'closed' : 'unknown'
             });
           }
 
-          // Add Link (Entreprise -> Filiale)
-          // Build path step for this sub-company with the relationship
+          // Add Link (Entreprise -> Filiale) - FREE descending link
           const subStep: PathStep = {
             name: sub.denomination,
             type: NodeType.COMPANY,
@@ -345,18 +367,20 @@ export class PappersCrawler {
             target: sub.siren,
             label: sub.qualite || "Mandataire",
             active: true,
-            path: [...currentPath, subStep] // Path from root to this sub-company with relationships
+            path: [...currentPath, subStep],
+            cost: LinkCost.FREE // Descending org chart = FREE
           });
 
-          // Queue for crawling
+          // Queue for crawling - FREE link, NO depth increment
           if (!this.visited.has(sub.siren)) {
             if (companiesScanned < limit) {
               this.visited.add(sub.siren);
               queue.push({
                 siren: sub.siren,
-                personDepth: current.personDepth, // Companies don't increment person depth
+                networkDepth: current.networkDepth, // FREE: no depth increment!
                 path: currentPath,
-                lastRelation: sub.qualite || "Mandataire"
+                lastRelation: sub.qualite || "Mandataire",
+                entryLinkCost: LinkCost.FREE
               });
             }
           }

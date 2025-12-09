@@ -43,6 +43,12 @@ export enum NodeType {
   ROOT = 'ROOT'
 }
 
+// Link cost classification for hybrid traversal algorithm
+export enum LinkCost {
+  FREE = 'FREE',       // Descending org chart links (subsidiaries) - no depth cost
+  COSTLY = 'COSTLY'    // Network jumps (via persons, upward links) - consumes depth budget
+}
+
 export interface GraphNode {
   id: string; // SIREN for companies, Name+DOB or ID for people
   label: string;
@@ -66,6 +72,7 @@ export interface GraphLink {
   label: string;
   active: boolean;
   path: PathStep[]; // Full path from root to target with relationship info
+  cost?: LinkCost;  // Classification: FREE (subsidiary) or COSTLY (network jump)
 }
 
 export interface CrawlStats {
