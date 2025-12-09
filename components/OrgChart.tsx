@@ -134,25 +134,32 @@ const OrgChart: React.FC<OrgChartProps> = ({ nodes, links, onNodeClick }) => {
         // Create hierarchy
         const root = d3.hierarchy(treeData);
 
-        // Tree layout - top-down orientation
+        // Tree layout - uses nodeSize for fixed spacing between nodes
+        // [width, height] of the node slot
+        // 150px width = 100px node + 50px gap
+        // 120px height = 40px node + 80px vertical link
         const treeLayout = d3.tree<TreeNode>()
-            .size([width - margin.left - margin.right, height - margin.top - margin.bottom]);
+            .nodeSize([150, 120]);
 
         treeLayout(root);
 
         // Zoom behavior
-        const g = svg.append("g")
-            .attr("transform", `translate(${margin.left},${margin.top})`);
+        const g = svg.append("g");
 
         const zoom = d3.zoom<SVGSVGElement, unknown>()
-            .scaleExtent([0.3, 3])
+            .scaleExtent([0.1, 3])
             .on("zoom", (event) => {
                 g.attr("transform", event.transform);
             });
         svg.call(zoom);
 
-        // Initial transform
-        svg.call(zoom.transform, d3.zoomIdentity.translate(margin.left, margin.top));
+        // Initial transform - Center the root
+        // With nodeSize, root is at (0,0). We shift it to center top.
+        const initialTransform = d3.zoomIdentity
+            .translate(width / 2, margin.top + 20)
+            .scale(0.8); // Start slightly zoomed out to see structure via context
+
+        svg.call(zoom.transform, initialTransform);
 
         // Glow filter
         const defs = svg.append("defs");
