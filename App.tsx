@@ -181,7 +181,7 @@ const App: React.FC = () => {
                   />
                 )}
                 {activeTab === 'table' && (
-                  <ResultsTable nodes={nodes} links={links} />
+                  <ResultsTable nodes={nodes} links={links} onNodeClick={setSelectedNode} />
                 )}
                 {activeTab === 'alerts' && (
                   <AlertsTable nodes={nodes} links={links} onNodeClick={setSelectedNode} />

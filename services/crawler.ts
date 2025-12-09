@@ -23,113 +23,121 @@ export class PappersCrawler {
     this.cancelFlag = true;
   }
 
-  // Demo Mock Data Generator - Creates a vast network for demonstration
+  // Demo Mock Data Generator - Handcrafted Coherent Network
   private async mockFetch(siren: string): Promise<PappersCompany> {
-    await new Promise(r => setTimeout(r, 300)); // Simulate latency
+    await new Promise(r => setTimeout(r, 150)); // Fast demo response
 
-    // Deterministic pseudo-random generation based on SIREN
-    const isRoot = siren === MOCK_DATA_ROOT_SIREN;
-    const sirenNum = parseInt(siren) || 443061841;
-    const suffix = siren.slice(-3);
-    const depthIndicator = siren.slice(-4, -3);
+    const MOCK_DB: Record<string, PappersCompany> = {
+      // Root: AERO FUTURE GROUP
+      "443061841": {
+        siren: "443061841",
+        denomination: "AERO FUTURE GROUP",
+        forme_juridique: "SA à conseil d'administration",
+        date_creation: "2000-01-15",
+        siege: { ville: "TOULOUSE", code_postal: "31000" },
+        statut_rcs: "Inscrit",
+        representants: [
+          { qualite: "Président du Conseil", nom_complet: "DUPONT Jean", nom: "DUPONT", prenom: "Jean", date_naissance: "1965-05-12", actuel: true },
+          { qualite: "Directeur Général", nom_complet: "MARTIN Sophie", nom: "MARTIN", prenom: "Sophie", date_naissance: "1978-08-23", actuel: true },
+          { qualite: "Administrateur", nom_complet: "LEROY Pierre", nom: "LEROY", prenom: "Pierre", date_naissance: "1955-11-30", actuel: true }
+        ],
+        entreprises_dirigees: [
+          { siren: "555000111", denomination: "AERO ENGINES", qualite: "Président" },
+          { siren: "555000222", denomination: "AERO WINGS", qualite: "Président" },
+          { siren: "555000333", denomination: "AERO TECH", qualite: "Président" },
+          { siren: "555000444", denomination: "AERO LEGACY", qualite: "Liquidateur" }
+        ]
+      },
+      // Sub 1: AERO ENGINES (Active, shared director Jean Dupont)
+      "555000111": {
+        siren: "555000111",
+        denomination: "AERO ENGINES",
+        forme_juridique: "SAS",
+        date_creation: "2005-03-10",
+        siege: { ville: "BORDEAUX", code_postal: "33000" },
+        statut_rcs: "Inscrit",
+        representants: [
+          { qualite: "Président", nom: "DUPONT", prenom: "Jean", date_naissance: "1965-05-12", actuel: true }, // Same Jean Dupont
+          { qualite: "Directeur Général", nom: "CURIE Marie", prenom: "Marie", date_naissance: "1980-02-15", actuel: true }
+        ],
+        entreprises_dirigees: [
+          { siren: "555000555", denomination: "ENGINES PARTS", qualite: "Président" }
+        ]
+      },
+      // Sub 2: AERO WINGS (Active)
+      "555000222": {
+        siren: "555000222",
+        denomination: "AERO WINGS",
+        forme_juridique: "SAS",
+        date_creation: "2010-06-20",
+        siege: { ville: "NANTES", code_postal: "44000" },
+        statut_rcs: "Inscrit",
+        representants: [
+          { qualite: "Président", denomination: "AERO FUTURE GROUP", siren: "443061841", personne_morale: true, actuel: true },
+          { qualite: "Directeur Général", nom: "BERNARD Luc", prenom: "Luc", date_naissance: "1975-04-04", actuel: true }
+        ]
+      },
+      // Sub 3: AERO TECH (Liquidation Judiciaire)
+      "555000333": {
+        siren: "555000333",
+        denomination: "AERO TECH",
+        forme_juridique: "SARL",
+        date_creation: "2015-09-01",
+        siege: { ville: "LYON", code_postal: "69000" },
+        statut_rcs: "Inscrit", // Still registered but in procedure
+        procedures_collectives: [
+          { type: "Liquidation judiciaire", date_debut: "2023-11-15" }
+        ],
+        representants: [
+          { qualite: "Gérant", nom: "DURAND Paul", prenom: "Paul", date_naissance: "1982-12-12", actuel: true }
+        ]
+      },
+      // Sub 4: AERO LEGACY (Radiée)
+      "555000444": {
+        siren: "555000444",
+        denomination: "AERO LEGACY (Radiée)",
+        forme_juridique: "SA",
+        date_creation: "1990-01-01",
+        siege: { ville: "PARIS", code_postal: "75001" },
+        statut_rcs: "Radié",
+        representants: [
+          { qualite: "Liquidateur", denomination: "AERO FUTURE GROUP", siren: "443061841", personne_morale: true, actuel: true }
+        ]
+      },
+      // Sub 1.1: ENGINES PARTS
+      "555000555": {
+        siren: "555000555",
+        denomination: "ENGINES PARTS",
+        forme_juridique: "SAS",
+        date_creation: "2020-01-01",
+        siege: { ville: "BORDEAUX", code_postal: "33000" },
+        statut_rcs: "Inscrit",
+        representants: [
+          { qualite: "Président", denomination: "AERO ENGINES", siren: "555000111", personne_morale: true, actuel: true },
+          // Marie Curie is also admin here
+          { qualite: "Administrateur", nom: "CURIE", prenom: "Marie", date_naissance: "1980-02-15", actuel: true }
+        ]
+      }
+    };
 
-    // Determine company characteristics based on SIREN patterns
-    const activeWithProcedure = suffix.endsWith('2');
-    const radiatedOnly = suffix.endsWith('3');
-    const radiatedWithProcedure = suffix.endsWith('4');
-    const isRadiated = radiatedOnly || radiatedWithProcedure;
-    const hasProcedure = activeWithProcedure || radiatedWithProcedure;
-
-    // Generate diverse company names
-    const companyPrefixes = ['ALPHA', 'BETA', 'GAMMA', 'DELTA', 'OMEGA', 'NEXUS', 'VERTEX', 'AXIOM', 'PRISM', 'ZENITH'];
-    const companySuffixes = ['TECH', 'INVEST', 'CAPITAL', 'HOLDINGS', 'GROUP', 'VENTURES', 'PARTNERS', 'SOLUTIONS', 'DYNAMICS', 'SYSTEMS'];
-    const prefixIdx = sirenNum % companyPrefixes.length;
-    const suffixIdx = (sirenNum + 3) % companySuffixes.length;
-
-    let name = `${companyPrefixes[prefixIdx]} ${companySuffixes[suffixIdx]}`;
-    if (isRoot) name = "GOOGLE FRANCE";
-    else if (activeWithProcedure) name = `${companyPrefixes[prefixIdx]} (Proc. Coll.)`;
-    else if (radiatedOnly) name = `${companyPrefixes[prefixIdx]} (Radiée)`;
-    else if (radiatedWithProcedure) name = `${companyPrefixes[prefixIdx]} (Radiée + Proc.)`;
-
-    // Generate diverse person names
-    const firstNames = ['Jean', 'Marie', 'Pierre', 'Sophie', 'Antoine', 'Camille', 'Louis', 'Emma', 'Hugo', 'Léa', 'Lucas', 'Chloé'];
-    const lastNames = ['MARTIN', 'BERNARD', 'DUBOIS', 'THOMAS', 'ROBERT', 'RICHARD', 'PETIT', 'DURAND', 'LEROY', 'MOREAU', 'SIMON', 'LAURENT'];
-    const roles = ['Président', 'Directeur Général', 'Gérant', 'Administrateur', 'Commissaire aux comptes'];
-
-    // Generate representatives - 1-2 different people per company (reduced for demo)
-    const numReps = 1 + (sirenNum % 2);
-    const representants: any[] = [];
-
-    for (let i = 0; i < numReps; i++) {
-      const nameIdx = (sirenNum + i * 7) % firstNames.length;
-      const surnameIdx = (sirenNum + i * 11) % lastNames.length;
-      const roleIdx = i % roles.length;
-      const birthYear = 1960 + ((sirenNum + i * 5) % 30);
-      const birthMonth = 1 + ((sirenNum + i) % 12);
-      const birthDay = 1 + ((sirenNum + i * 3) % 28);
-
-      representants.push({
-        qualite: roles[roleIdx],
-        personne_morale: false,
-        nom: lastNames[surnameIdx],
-        prenom: firstNames[nameIdx],
-        date_naissance: `${birthYear}-${String(birthMonth).padStart(2, '0')}-${String(birthDay).padStart(2, '0')}`,
-        actuel: true
-      });
+    if (MOCK_DB[siren]) {
+      return MOCK_DB[siren];
     }
 
-    // Add 1 holding company as moral person representative (reduced for demo)
-    const numHoldings = isRoot ? 1 : 0;
-    for (let i = 0; i < numHoldings; i++) {
-      const holdingIdx = (sirenNum + i * 13) % companyPrefixes.length;
-      representants.push({
-        qualite: 'Holding',
-        personne_morale: true,
-        denomination: `${companyPrefixes[holdingIdx]} HOLDING`,
-        siren: String((sirenNum + 100 + i * 50) % 1000000000).padStart(9, '4'),
-        actuel: true
-      });
-    }
-
-    // Generate subsidiaries - Root company has 3, others have 1-2 (reduced for demo)
-    const entreprises_dirigees: any[] = [];
-    const numSubsidiaries = isRoot ? 3 : Math.max(0, 2 - parseInt(depthIndicator) || 0);
-
-    for (let i = 0; i < numSubsidiaries; i++) {
-      const subSiren = String((sirenNum + 1000 + i * 111) % 1000000000).padStart(9, '4');
-      const subNameIdx = (sirenNum + i * 17) % companyPrefixes.length;
-      const subSuffixIdx = (sirenNum + i * 19) % companySuffixes.length;
-      const subRoleIdx = i % roles.length;
-
-      // Add variety - some with procedures, some radiated
-      let subName = `${companyPrefixes[subNameIdx]} ${companySuffixes[subSuffixIdx]}`;
-      if (i === 1 && isRoot) subName = `${companyPrefixes[subNameIdx]} (Proc. Coll.)`;
-      if (i === 2 && isRoot) subName = `${companyPrefixes[subNameIdx]} (Radiée)`;
-      if (i === 3 && isRoot) subName = `${companyPrefixes[subNameIdx]} (Radiée + Proc.)`;
-
-      entreprises_dirigees.push({
-        siren: subSiren,
-        denomination: subName,
-        qualite: roles[subRoleIdx]
-      });
-    }
+    // FALLBACK: Deterministic procedural generation for unknown nodes (to allow exploration)
+    const sirenNum = parseInt(siren) || 0;
+    const isRadiated = siren.endsWith('4');
 
     return {
       siren,
-      denomination: name,
-      forme_juridique: ['SAS', 'SARL', 'SA', 'SCI'][sirenNum % 4],
-      date_creation: `${2000 + (sirenNum % 20)}-01-01`,
+      denomination: `UNKNOWN ENTITY ${siren.slice(-3)}`,
+      forme_juridique: "SAS",
+      date_creation: "2020-01-01",
       statut_rcs: isRadiated ? 'Radié' : 'Inscrit',
-      siege: {
-        ville: ['PARIS', 'LYON', 'MARSEILLE', 'TOULOUSE', 'NICE', 'NANTES', 'BORDEAUX', 'LILLE'][sirenNum % 8],
-        code_postal: String(75000 + (sirenNum % 95)).slice(0, 5)
-      },
-      procedures_collectives: hasProcedure ? [
-        { type: 'Liquidation judiciaire', date_debut: `2023-${String(1 + (sirenNum % 12)).padStart(2, '0')}-15` }
-      ] : [],
-      representants,
-      entreprises_dirigees
+      siege: { ville: "PARIS", code_postal: "75000" },
+      representants: [
+        { qualite: "Président", nom: "GENERIC", prenom: "User", date_naissance: "1980-01-01", actuel: true }
+      ]
     };
   }
 
