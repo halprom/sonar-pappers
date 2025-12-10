@@ -125,7 +125,7 @@ const App: React.FC = () => {
 
       {/* Results View */}
       {currentView === 'results' && (
-        <div className="min-h-screen flex flex-col bg-cyber-dark">
+        <div className="h-screen w-full flex flex-col bg-cyber-dark overflow-hidden">
           <ResultsHeader
             config={config}
             stats={stats}
@@ -134,11 +134,11 @@ const App: React.FC = () => {
             onCancel={handleCancel}
           />
 
-          <main className="flex-1 flex overflow-hidden">
+          <main className="flex-1 flex overflow-hidden relative">
             {/* Main Content Area */}
-            <div className="flex-1 flex flex-col min-w-0">
+            <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
               {/* Tabs */}
-              <div className="flex items-center gap-2 px-4 py-3 border-b border-white/5">
+              <div className="flex items-center gap-2 px-4 py-3 border-b border-white/5 flex-shrink-0">
                 <TabButton
                   active={activeTab === 'graph'}
                   onClick={() => setActiveTab('graph')}
@@ -172,7 +172,7 @@ const App: React.FC = () => {
               </div>
 
               {/* Content */}
-              <div className="flex-1 min-h-0 relative">
+              <div className="flex-1 overflow-auto custom-scrollbar">
                 {activeTab === 'graph' && (
                   <NetworkGraph
                     nodes={nodes}
@@ -197,7 +197,7 @@ const App: React.FC = () => {
 
             {/* Right Sidebar - Selected Node Details */}
             {selectedNode && (
-              <aside className="w-80 border-l border-white/5 glass-light overflow-y-auto custom-scrollbar">
+              <aside className="w-80 border-l border-white/5 glass-light overflow-y-auto custom-scrollbar flex-shrink-0">
                 <div className="p-4">
                   <div className="flex justify-between items-start mb-4">
                     <h3 className="font-semibold text-white break-words pr-2 text-lg">{selectedNode.label}</h3>
